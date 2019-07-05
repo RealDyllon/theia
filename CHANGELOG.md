@@ -3,6 +3,7 @@
 ## v0.9.0
 
 - [plugin] added support of debug activation events [#5645](https://github.com/theia-ide/theia/pull/5645)
+- [plugin] added support of `workspaceContains` activation events [#5649](https://github.com/theia-ide/theia/pull/5649)
 
 Breaking changes:
 

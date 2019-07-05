@@ -22,7 +22,7 @@ import { HostedPluginServer, PluginMetadata, getPluginId } from '../../common/pl
 import { HostedPluginWatcher } from './hosted-plugin-watcher';
 import { setUpPluginApi } from '../../main/browser/main-context';
 import { RPCProtocol, RPCProtocolImpl } from '../../api/rpc-protocol';
-import { ILogger, ContributionProvider, CommandRegistry, WillExecuteCommandEvent } from '@theia/core';
+import { ILogger, ContributionProvider, CommandRegistry, WillExecuteCommandEvent, CancellationTokenSource } from '@theia/core';
 import { PreferenceServiceImpl, PreferenceProviderProvider } from '@theia/core/lib/browser';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { PluginContributionHandler } from '../../main/browser/plugin-contribution-handler';
@@ -40,6 +40,8 @@ import { Deferred } from '@theia/core/lib/common/promise-util';
 import { DebugSessionManager } from '@theia/debug/lib/browser/debug-session-manager';
 import { DebugConfigurationManager } from '@theia/debug/lib/browser/debug-configuration-manager';
 import { WaitUntilEvent } from '@theia/core/lib/common/event';
+import { FileSearchService } from '@theia/file-search/lib/common/file-search-service';
+import { isCancelled } from '@theia/core';
 
 export type PluginHost = 'frontend' | string;
 export type DebugActivationEvent = 'onDebugResolve' | 'onDebugInitialConfigurations' | 'onDebugAdapterProtocolTracker';
@@ -93,6 +95,9 @@ export class HostedPluginSupport {
 
     @inject(DebugConfigurationManager)
     protected readonly debugConfigurationManager: DebugConfigurationManager;
+
+    @inject(FileSearchService)
+    protected readonly fileSearchService: FileSearchService;
 
     private theiaReadyPromise: Promise<any>;
 
@@ -178,11 +183,11 @@ export class HostedPluginSupport {
         return rpc;
     }
 
-    protected initPluginHostManager(rpc: RPCProtocol, data: PluginsInitializationData): void {
+    protected async initPluginHostManager(rpc: RPCProtocol, data: PluginsInitializationData): Promise<void> {
         const manager = rpc.getProxy(MAIN_RPC_CONTEXT.HOSTED_PLUGIN_MANAGER_EXT);
         this.managers.push(manager);
 
-        manager.$init({
+        await manager.$init({
             plugins: data.plugins,
             preferences: getPreferences(this.preferenceProviderProvider, data.roots),
             globalState: data.globalStates,
@@ -194,6 +199,10 @@ export class HostedPluginSupport {
                 hostLogPath: data.logPath,
                 hostStoragePath: data.storagePath || ''
             });
+
+        for (const plugin of data.plugins) {
+            this.activateByWorkspaceContains(manager, plugin);
+        }
     }
 
     private createServerRpc(pluginID: string, hostID: string): RPCProtocol {
@@ -269,6 +278,55 @@ export class HostedPluginSupport {
             }
         }
         await Promise.all(promises);
+    }
+
+    protected async activateByWorkspaceContains(manager: PluginManagerExt, plugin: PluginMetadata): Promise<void> {
+        if (!plugin.source.activationEvents) {
+            return;
+        }
+        const paths: string[] = [];
+        const includePatterns: string[] = [];
+        for (const activationEvent of plugin.source.activationEvents) {
+            if (activationEvent.startsWith('workspaceContains:')) {
+                const fileNameOrGlob = activationEvent.substr('workspaceContains:'.length);
+                if (fileNameOrGlob.indexOf('*') >= 0 || fileNameOrGlob.indexOf('?') >= 0) {
+                    includePatterns.push(fileNameOrGlob);
+                } else {
+                    paths.push(fileNameOrGlob);
+                }
+            }
+        }
+        const promises: Promise<boolean>[] = [];
+        if (paths.length) {
+            promises.push(this.workspaceService.containsSome(paths));
+        }
+        if (includePatterns.length) {
+            const tokenSource = new CancellationTokenSource();
+            const searchTimeout = setTimeout(() => {
+                tokenSource.cancel();
+                // activate eagerly if took to long to search
+                manager.$activateByEvent(`onPlugin:${plugin.model.id}`);
+            }, 7000);
+            promises.push((async () => {
+                try {
+                    const result = await this.fileSearchService.find('', {
+                        rootUris: this.workspaceService.tryGetRoots().map(r => r.uri),
+                        includePatterns,
+                    }, tokenSource.token);
+                    return result.length > 0;
+                } catch (e) {
+                    if (!isCancelled(e)) {
+                        console.error(e);
+                    }
+                    return false;
+                } finally {
+                    clearTimeout(searchTimeout);
+                }
+            })());
+        }
+        if (promises.length && await Promise.all(promises).then(exists => exists.some(v => v))) {
+            await manager.$activateByEvent(`onPlugin:${plugin.model.id}`);
+        }
     }
 
 }
