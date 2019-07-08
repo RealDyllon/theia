@@ -4,6 +4,7 @@
 - [task] added support for VS Code task contribution points: `taskDefinitions`, `problemMatchers`, and `problemPatterns`
 
 - [plugin] added support of debug activation events [#5645](https://github.com/theia-ide/theia/pull/5645)
+- [plugin] Fixed `Converting circular structure to JSON` Error [#5661](https://github.com/theia-ide/theia/pull/5661)
 
 Breaking changes:
 
