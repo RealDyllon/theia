@@ -28,8 +28,20 @@
     background-color: var(--theia-layout-color0);
 }
 
+@media only screen and (max-height: 700px) {
+    .dialogContent .theia-FileDialog {
+        height: 300px;
+    }
+}
+
 .dialogContent .theia-SaveFileDialog {
     height: 450px;
+}
+
+@media only screen and (max-height: 700px) {
+    .dialogContent .theia-SaveFileDialog {
+        height: 300px;
+    }
 }
 
 .dialogContent .theia-NavigationPanel,
